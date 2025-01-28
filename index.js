@@ -1,37 +1,80 @@
+// ... existing code ...
+require('dotenv').config();  // Load environment variables
+console.log('Environment variables loaded.');
+
 const { Telegraf } = require('telegraf');
-require('dotenv').config();
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+if (!process.env.BOT_TOKEN) {
+  console.error('Error: BOT_TOKEN is not defined in the .env file');
+  process.exit(1); // Terminate process if BOT_TOKEN is not defined
+}
 
-bot.command("start", (ctx) => {
+const bot = new Telegraf(process.env.BOT_TOKEN);
+console.log('Telegraf instance created.');
 
-    ctx.reply('Welcome to the TON Swap Bot!', {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Open Mini App', web_app: { url: 'https://d319-177-238-23-120.ngrok-free.app' } }]
-            ]
-        }
-    });
+bot.use((ctx, next) => {
+  console.log('Received update:', ctx.update);
+  return next();
 });
 
-bot.on("web_app_data", async (ctx) => {
-    console.log(ctx)
-});
-
-bot.on("message", async (ctx) => {
-    console.log(ctx.message)
-    if (ctx.message?.web_app_data?.data) {
-        try {
-            const data = ctx.message?.web_app_data?.data
-            await ctx.telegram.sendMessage(ctx.message.chat.id, 'Got message from MiniApp')
-            await ctx.telegram.sendMessage(ctx.message.chat.id, data)
-        } catch (e) {
-            await ctx.telegram.sendMessage(ctx.message.chat.id, 'Got message from MiniApp but failed to read')
-            await ctx.telegram.sendMessage(ctx.message.chat.id, e)
-        }
+bot.start((ctx) => {
+  console.log('/start command received.');
+  ctx.reply('Hello! Press the button to open the miniapp:', {
+    reply_markup: {
+      keyboard: [
+        [
+          {
+            text: 'Open miniapp',
+            web_app: {
+              url: 'https://3775-189-216-171-48.ngrok-free.app'
+            }
+          }
+        ]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true
     }
+  });
+});
+
+bot.on('message', (ctx) => {
+  console.log('Message received.');
+  const message = ctx.message;
+  if (message.web_app_data) {
+    const rawData = message.web_app_data.data;
+    console.log('Raw data received from WebApp:', rawData);
+
+    let data;
+    try {
+      data = JSON.parse(rawData);
+    } catch (err) {
+      console.error('Error parsing JSON:', err);
+      return ctx.reply('Error parsing received data.');
+    }
+
+    if (data.action === 'connection') {
+      ctx.reply('Received "connection" action from miniapp. All OK!');
+    } else if (data.action === 'create_swap') {
+      const { recipient, amount, hashLock } = data;
+      ctx.reply(`Swap created. Recipient: ${recipient}, Amount: ${amount}, HashLock: ${hashLock}`);
+    } else {
+      ctx.reply(`Action received: ${data.action}. I don't have logic for this!`);
+    }
+  } else {
+    ctx.reply('Hello, you can type /start to see the WebApp button.');
+  }
+});
+
+bot.catch((err, ctx) => {
+  console.error('Oops', err);
+  ctx.reply('An error occurred in the bot. Please try again.');
 });
 
 bot.launch().then(() => {
-    console.log('Bot is running...');
-  });
+  console.log('Telegraf bot running...');
+}).catch(err => {
+  console.error('Error starting bot:', err);
+  process.exit(1);
+});
+
+// ... existing code ...
