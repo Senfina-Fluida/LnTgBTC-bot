@@ -5,10 +5,10 @@ import path from 'path';
 const dbPath = path.join('./data', 'bot.db');
 const db = new Datastore({ filename: dbPath, autoload: true });
 
-// Function to insert an article into the database
-export function insertDocument(article) {
+// Function to insert an document into the database
+export function insertDocument(document) {
     return new Promise((resolve, reject) => {
-        db.insert(article, (err, newDoc) => {
+        db.insert(document, (err, newDoc) => {
             if (err) {
                 reject(err);
             } else {
@@ -18,7 +18,20 @@ export function insertDocument(article) {
     });
 }
 
-// Function to query articles from the database
+// Function to update a document in the database
+export function updateDocument(query, update, options = {}) {
+    return new Promise((resolve, reject) => {
+      db.update(query, update, options, (err, numAffected) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(numAffected); // Resolve with the number of affected documents
+        }
+      });
+    });
+  }
+
+// Function to query documents from the database
 export function queryDocuments(query = {}, limit = 10) {
     return new Promise((resolve, reject) => {
         db.find(query)
