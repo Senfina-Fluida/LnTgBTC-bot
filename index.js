@@ -79,6 +79,7 @@ async function startSwap(ctx,swapId){
 
       swap = docs[0];
       if(swap.destination === "Lightning"){
+        console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}`)
         await bot.telegram.sendMessage(
           swap.chatId,
           `Your swap ${swapId}, has been selected. Time to lock tgBTC`,{
@@ -86,7 +87,7 @@ async function startSwap(ctx,swapId){
               inline_keyboard: [
                 [{
                   text: "Open Web App",
-                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify(swap))}` }
+                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}` }
                 }]
               ]
             }
@@ -99,12 +100,13 @@ async function startSwap(ctx,swapId){
           swap.chatId,
           `Your swap ${swapId}, has been selected. You will receive a lightning invoice to pay using the miniapp and finish the swap`
         );
+        console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: false}))}`)
         ctx.reply("Swap selected, time to lock tgBTC",{
           reply_markup: {
             inline_keyboard: [
               [{
                 text: "Start Swap",
-                web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify(swap))}` }
+                web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: false}))}` }
               }]
             ]
           }
@@ -325,7 +327,6 @@ bot.command('help', (ctx) => {
 bot.on('message', async (ctx) => {
   console.log('Message received.');
   const message = ctx.message;
-  console.log(ctx)
   if (message.web_app_data) {
     const rawData = message.web_app_data.data;
     console.log('Raw data received from WebApp:', rawData);
@@ -346,7 +347,6 @@ bot.on('message', async (ctx) => {
         amount: data.amount,
         chatId: ctx.message.chat.id
       }
-      console.log(ctx.message.chat)
       const docId = await insertDocument(doc);
       const query = {
         chatId: ctx.message.chat.id,
@@ -372,7 +372,50 @@ bot.on('message', async (ctx) => {
     } else if (data.action === 'select_swap') {
       await startSwap(ctx,data.swapId);
     } 
+    else if (data.action === 'swap_locked') {
 
+      const query = {
+        _id: data.id,
+      }
+      const docs = await queryDocuments(query);
+      const swap = docs[0];
+      await bot.telegram.sendMessage(
+        swap.selectorChatId,
+        `Swap ${swap.swapId} is ready to be finished, start process in the miniapp to pay invoice and claim tgBTC `,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Open Web App",
+                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({fromTON: false, invoice: swap.invoice}))}` }
+                }
+              ]
+            ]
+          }
+        }
+      );
+      ctx.reply("Your swap should be finished soon");
+    } 
+    else if (data.action === 'swap_finished') {
+
+      const query = {
+        _id: data.id,
+      }
+      const docs = await queryDocuments(query);
+      const swap = docs[0];
+      const doc = {
+        _id: swap._id,
+        status: "finished",
+      }
+      console.log(ctx.message.chat)
+      const docId = await insertDocument(doc);
+      await bot.telegram.sendMessage(
+        swap.chatId,
+        `Your swap ${swapId}, has been completed`
+      );
+      ctx.reply("Your swap has been completed");
+    } 
   } else {
     ctx.reply('Hello, you can type /start to see the WebApp button or /help to see all commands.');
   }
