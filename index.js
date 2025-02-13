@@ -49,7 +49,7 @@ async function listSwaps(ctx, query, title) {
     message += docs.map(formatSwap).join(''); //More efficient than forEach
 
     await sendChunkedMessage(ctx, message);
-
+    return(docs);
   } catch (err) {
     console.error("Error listing swaps:", err); // Log the error for debugging
     return ctx.reply("Error listing swaps from the database.");
@@ -69,7 +69,7 @@ async function startSwap(ctx,swapId){
       let swap = docs[0];
       await updateDocument(
         { _id: swapId},
-        { $set : {status: "selected" , selectorChatId: ctx.chat.id}} // Use ctx.chat.id for group chats too
+        { $set : {status: "selected" , selectorChatId: ctx.message.chat.id}} // Use ctx.chat.id for group chats too
       );
       query = {
         _id: swapId,
@@ -78,18 +78,21 @@ async function startSwap(ctx,swapId){
       docs = await queryDocuments(query);
 
       swap = docs[0];
+      console.log(swap)
       if(swap.destination === "Lightning"){
         console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}`)
         await bot.telegram.sendMessage(
           swap.chatId,
           `Your swap ${swapId}, has been selected. Time to lock tgBTC`,{
             reply_markup: {
-              inline_keyboard: [
+              keyboard: [
                 [{
-                  text: "Open Web App",
+                  text: "Start Swap",
                   web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}` }
                 }]
-              ]
+              ],
+              resize_keyboard: true,
+              one_time_keyboard: true
             }
           }
         );
@@ -100,17 +103,20 @@ async function startSwap(ctx,swapId){
           swap.chatId,
           `Your swap ${swapId}, has been selected. You will receive a lightning invoice to pay using the miniapp and finish the swap`
         );
-        console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: false}))}`)
-        ctx.reply("Swap selected, time to lock tgBTC",{
-          reply_markup: {
-            inline_keyboard: [
-              [{
-                text: "Start Swap",
-                web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: false}))}` }
-              }]
-            ]
+        ctx.reply(
+          `Swap selected, time to lock tgBTC`,{
+            reply_markup: {
+              keyboard: [
+                [{
+                  text: "Start swap",
+                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}` }
+                }]
+              ],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            }
           }
-        });
+        );
       }
 
   } catch (error) {
@@ -127,10 +133,12 @@ bot.use((ctx, next) => {
 
 bot.start(async (ctx) => {
   console.log('/start command received.');
-  const query = { status: "pending" };
-  const chatId = ctx.chat.id;
+  const query = {
+    status: "pending",
+    chatId: { $ne: ctx.message.chat.id }
+  }; 
   const docs = await queryDocuments(query);
-  const webAppUrl = `${MINIAPP_URL}/?params=${encodeURIComponent(JSON.stringify(docs))}}`;
+  const webAppUrl = `${MINIAPP_URL}/?params=${encodeURIComponent(JSON.stringify(docs))}`;
   console.log(webAppUrl)
   ctx.reply('Hello! Press the button to open the miniapp:', {
     reply_markup: {
@@ -150,13 +158,52 @@ bot.start(async (ctx) => {
   });
 });
 bot.command('list', async (ctx) => {
-  const query = {status: "pending"};
-  await listSwaps(ctx, query, "Here are all the swaps:");
+  const query = {status: "pending"}; // To test
+  /*
+  const query = {
+    status: "pending",
+    chatId: { $ne: ctx.message.chat.id }
+  } 
+  */
+  let docs = await listSwaps(ctx, query, "Here are all the swaps:");
+
+  docs = docs.map(doc => {
+    return({
+      ...doc,
+      isOwner: ctx.message.chat.id === doc.chatId 
+    });
+  });
+  ctx.reply(`Open miniapp to view the list.`, {
+    reply_markup: {
+      inline_keyboard: [
+        [{
+        text: "Open Web App",
+        web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+        }]
+      ]
+    }
+  });
 });
 
 bot.command('mypending', async (ctx) => {
   const query = { status: "pending", chatId: ctx.message.chat.id };
-  await listSwaps(ctx, query, "Here are your pending swaps:");
+  let docs = await listSwaps(ctx, query, "Here are your pending swaps:");
+  docs = docs.map(doc => {
+    return({
+      ...doc,
+      isOwner: ctx.message.chat.id === doc.chatId 
+    });
+  })
+  ctx.reply(`Open miniapp to view the list.`, {
+    reply_markup: {
+      inline_keyboard: [
+        [{
+        text: "Open Web App",
+        web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+        }]
+      ]
+    }
+  });
 });
 
 bot.command('myselected', async (ctx) => {
@@ -168,8 +215,8 @@ bot.command('myselected', async (ctx) => {
 bot.command('create', async (ctx) => {
   const params = ctx.message.text.split(' ').slice(1).join(' '); // Get parameters after command
   const [ destination, amount] = params.split(' ');  // Split parameters
-
-  if (!destination || !amount || isNaN(amount) || parseFloat(amount) <= 0) {
+  
+  if ((destination !== "TON" && destination !== "Lightning") || !destination || !amount || isNaN(amount) || parseFloat(amount) <= 0) {
     return ctx.reply("Please provide destination, and a valid amount. Example: /create Lightning 10");
   }
 
@@ -178,7 +225,7 @@ bot.command('create', async (ctx) => {
     source: destination !== "TON" ? "TON" : "Lightning",
     destination: destination,
     amount: parseFloat(amount),
-    chatId: ctx.chat.id,
+    chatId: ctx.message.chat.id,
   };
 
   try {
@@ -188,14 +235,12 @@ bot.command('create', async (ctx) => {
 
     ctx.reply(`Swap created with ID: ${newSwap._id}. Open miniapp to view all pending.`, {
       reply_markup: {
-        keyboard: [
+        inline_keyboard: [
           [{
           text: "Open Web App",
           web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
           }]
-        ],
-        resize_keyboard: true,
-        one_time_keyboard: true
+        ]
       }
     });
   } catch (error) {
@@ -243,64 +288,7 @@ bot.command('select', async (ctx) => {
 
 bot.command('finish', async (ctx) => {
   const swapId = ctx.message.text.split(' ')[1]; // Extract swapId from command
-
-  if (!swapId) {
-    return ctx.reply("Please provide a swap ID.  Example: /finish 12345");
-  }
-
-  const query = {
-    _id: swapId,
-    status: "selected",
-    selectorChatId: ctx.chat.id,
-  };
-
-  try {
-    const docs = await queryDocuments(query);
-
-    if (docs.length === 0) {
-      return ctx.reply("No swap with that ID that you have selected before.");
-    }
-
-    const swap = docs[0];
-
-    // Inline Keyboard for Confirmation
-    if(swap.destination === "Lightning"){
-      await bot.telegram.sendMessage(
-        swap.chatId,
-        `Your swap ${swapId}, has been selected. Time to lock tgBTC`,{
-          reply_markup: {
-            inline_keyboard: [
-              [{
-                text: "Open Web App",
-                web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: false}))}` }
-              }]
-            ]
-          }
-        }
-      );
-      ctx.reply("Swap selected. You will receive a lightning invoice to pay using the miniapp and finish the swap");
-
-    } else {
-      await bot.telegram.sendMessage(
-        swap.chatId,
-        `Your swap ${swapId}, has been selected. You will receive a lightning invoice to pay using the miniapp and finish the swap`
-      );
-      console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON:true}))}`)
-      ctx.reply("Swap selected, time to lock tgBTC",{
-        reply_markup: {
-          inline_keyboard: [
-            [{
-              text: "Start Swap",
-              web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON:true}))}` }
-            }]
-          ]
-        }
-      });
-    }
-  } catch (error) {
-    console.error("Error finding swap:", error);
-    return ctx.reply("An error occurred. Please try again later.");
-  }
+  await startSwap(ctx,swapId)
 });
 
 bot.action(/confirm_swap_(.+)/, async (ctx) => {
@@ -358,40 +346,42 @@ bot.on('message', async (ctx) => {
       console.log(`${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}`)
       ctx.reply("Action performed, connect app to see your pending swaps", {
         reply_markup: {
-          keyboard: [
+          inline_keyboard: [
             [{
             text: "Open Web App",
             web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
             }]
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: true
+          ]
         }
       });
       
     } else if (data.action === 'select_swap') {
+      console.log(data)
       await startSwap(ctx,data.swapId);
     } 
     else if (data.action === 'swap_locked') {
 
       const query = {
-        _id: data.id,
+        _id: data.swapId,
       }
       const docs = await queryDocuments(query);
       const swap = docs[0];
+      console.log(swap)
       await bot.telegram.sendMessage(
         swap.selectorChatId,
         `Swap ${swap.swapId} is ready to be finished, start process in the miniapp to pay invoice and claim tgBTC `,
         {
           reply_markup: {
-            inline_keyboard: [
+            keyboard: [
               [
                 {
                   text: "Open Web App",
                   web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({fromTON: false, invoice: swap.invoice}))}` }
                 }
               ]
-            ]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true
           }
         }
       );
