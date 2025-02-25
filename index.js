@@ -1,7 +1,7 @@
 import 'dotenv/config'; // Load environment variables using import
 
 import { Telegraf } from 'telegraf';
-import { queryDocuments, insertDocument, updateDocument } from './db.js';
+import { queryDocuments, insertDocument, updateDocument,deleteDocument } from './db.js';
 
 
 console.log('Environment variables loaded.');
@@ -41,7 +41,8 @@ async function listSwaps(ctx, query, title) {
   try {
     const docs = await queryDocuments(query);
     if (docs.length === 0) {
-      return ctx.reply("No swaps found.");
+      ctx.reply("No swaps found.");
+      return; 
     }
 
     let message = `${title}\n`;
@@ -69,7 +70,14 @@ async function startSwap(ctx,swapId){
       let swap = docs[0];
       await updateDocument(
         { _id: swapId},
-        { $set : {status: "selected" , selectorChatId: ctx.message.chat.id}} // Use ctx.chat.id for group chats too
+        {
+           $set : {
+            status: "selected" ,
+            selectorChatId: ctx.message?.chat.id ? 
+              ctx.message.chat.id :
+              ctx.update.callback_query.message.chat.id
+          }
+        } // Use ctx.chat.id for group chats too
       );
       query = {
         _id: swapId,
@@ -103,6 +111,8 @@ async function startSwap(ctx,swapId){
           swap.chatId,
           `Your swap ${swapId}, has been selected. You will receive a lightning invoice to pay using the miniapp and finish the swap`
         );
+        console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}`)
+
         ctx.reply(
           `Swap selected, time to lock tgBTC`,{
             reply_markup: {
@@ -166,7 +176,7 @@ bot.command('list', async (ctx) => {
   } 
   */
   let docs = await listSwaps(ctx, query, "Here are all the swaps:");
-
+  if(!docs) return;
   docs = docs.map(doc => {
     return({
       ...doc,
@@ -175,12 +185,17 @@ bot.command('list', async (ctx) => {
   });
   ctx.reply(`Open miniapp to view the list.`, {
     reply_markup: {
-      inline_keyboard: [
-        [{
-        text: "Open Web App",
-        web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
-        }]
-      ]
+      keyboard: [
+        [
+          {
+            text: "Open Web App",
+            web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+          }
+        ]
+      ],
+
+      resize_keyboard: true,
+      one_time_keyboard: true
     }
   });
 });
@@ -188,6 +203,7 @@ bot.command('list', async (ctx) => {
 bot.command('mypending', async (ctx) => {
   const query = { status: "pending", chatId: ctx.message.chat.id };
   let docs = await listSwaps(ctx, query, "Here are your pending swaps:");
+  if(!docs) return;
   docs = docs.map(doc => {
     return({
       ...doc,
@@ -196,12 +212,14 @@ bot.command('mypending', async (ctx) => {
   })
   ctx.reply(`Open miniapp to view the list.`, {
     reply_markup: {
-      inline_keyboard: [
+      keyboard: [
         [{
-        text: "Open Web App",
-        web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
-        }]
-      ]
+          text: "Open Web App",
+          web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+        }],
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true
     }
   });
 });
@@ -231,16 +249,23 @@ bot.command('create', async (ctx) => {
   try {
     const newSwap = await insertDocument(doc);
     const query = {chatId: ctx.message.chat.id, status: "pending"}
-    const docs = await queryDocuments(query);
-
+    let docs = await queryDocuments(query);
+    docs = docs.map(doc => {
+      return({
+        ...doc,
+        isOwner: ctx.message.chat.id === doc.chatId 
+      });
+    });
     ctx.reply(`Swap created with ID: ${newSwap._id}. Open miniapp to view all pending.`, {
       reply_markup: {
-        inline_keyboard: [
+        keyboard: [
           [{
           text: "Open Web App",
           web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
-          }]
-        ]
+          }],
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true
       }
     });
   } catch (error) {
@@ -327,7 +352,7 @@ bot.on('message', async (ctx) => {
       return ctx.reply('Error parsing received data.');
     }
 
-   if (data.action === 'post_swap'){
+    if (data.action === 'post_swap'){
       const doc = {
         status: "pending",
         source: data.source,
@@ -340,22 +365,44 @@ bot.on('message', async (ctx) => {
         chatId: ctx.message.chat.id,
         status: "pending"
       }
-      const docs = await queryDocuments(query);
-      console.log(docs)
-      
+      let docs = await queryDocuments(query);
+      docs = docs.map(doc => {
+        return({
+          ...doc,
+          isOwner: ctx.message.chat.id === doc.chatId 
+        });
+      });
       console.log(`${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}`)
       ctx.reply("Action performed, connect app to see your pending swaps", {
         reply_markup: {
-          inline_keyboard: [
+          keyboard: [
             [{
             text: "Open Web App",
             web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
-            }]
-          ]
+            }],
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: true
         }
       });
       
-    } else if (data.action === 'select_swap') {
+    } 
+    else if (data.action === 'delete_pending_swap') {
+      const query = {
+        _id: data.swapId,
+        status: "pending"
+      }
+      const docs = await queryDocuments(query);
+      const swap = docs[0];
+      if(!swap){
+        ctx.reply("No swap pending with that id");
+        return
+      }
+      await deleteDocument(query);
+      ctx.reply("Swap deleted");
+
+    } 
+    else if (data.action === 'select_swap') {
       console.log(data)
       await startSwap(ctx,data.swapId);
     } 

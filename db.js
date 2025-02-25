@@ -29,8 +29,19 @@ export function updateDocument(query, update, options = {}) {
         }
       });
     });
-  }
-
+}
+// Function to delete a document from the database
+export function deleteDocument(query, options = {}) {
+    return new Promise((resolve, reject) => {
+        db.remove(query, options, (err, numRemoved) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(numRemoved); // Resolve with the number of documents removed
+            }
+        });
+    });
+}
 // Function to query documents from the database
 export function queryDocuments(query = {}, limit = 10) {
     return new Promise((resolve, reject) => {
