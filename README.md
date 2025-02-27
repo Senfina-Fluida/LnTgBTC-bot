@@ -40,8 +40,6 @@ Once a swap is selected, the following steps ensure a secure and trustless excha
    - If the swap is not completed before the **timelock** expires, the user who locked tgBTC can refund their funds.
    - The timelock ensures that funds are not locked indefinitely, providing a safety net for both parties.
 
----
-
 This process ensures that:
 - The **amount** in the invoice matches the swap amount, preventing discrepancies.
 - The **hashlock** and **timelock** are securely derived from the invoice, ensuring atomicity and fairness.
