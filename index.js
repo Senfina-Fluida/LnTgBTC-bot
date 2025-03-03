@@ -134,7 +134,65 @@ async function startSwap(ctx,swapId){
     return ctx.reply("An error occurred during update.");
   }
 };
+async function finishSelectedSwap(ctx,swapId){
+  try {
+      let query = {
+        _id: swapId,
+        status: "selected"
+      };
+      let docs = await queryDocuments(query);
+      if(docs.length === 0){
+        return ctx.reply("No swap with that id");
+      }
+      let swap = docs[0];
+      console.log(swap)
+      if(swap.destination === "Lightning"){
+        console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}`)
+        await bot.telegram.sendMessage(
+          swap.chatId,
+          `Your swap ${swapId}, has been selected. Time to lock tgBTC`,{
+            reply_markup: {
+              keyboard: [
+                [{
+                  text: "Start Swap",
+                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}` }
+                }]
+              ],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            }
+          }
+        );
+        ctx.reply("Swap selected. You will receive a lightning invoice to pay using the miniapp and finish the swap");
 
+      } else {
+        await bot.telegram.sendMessage(
+          swap.chatId,
+          `Your swap ${swapId}, has been selected. You will receive a lightning invoice to pay using the miniapp and finish the swap`
+        );
+        console.log(`${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}`)
+
+        ctx.reply(
+          `Swap selected, time to lock tgBTC`,{
+            reply_markup: {
+              keyboard: [
+                [{
+                  text: "Start swap",
+                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({...swap,fromTON: true}))}` }
+                }]
+              ],
+              resize_keyboard: true,
+              one_time_keyboard: true
+            }
+          }
+        );
+      }
+
+  } catch (error) {
+    console.error("Error updating swap:", error);
+    return ctx.reply("An error occurred during update.");
+  }
+};
 
 bot.use((ctx, next) => {
   console.log('Received update:', ctx.update);
@@ -189,7 +247,7 @@ bot.command('list', async (ctx) => {
         [
           {
             text: "Open Web App",
-            web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+            web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
           }
         ]
       ],
@@ -215,7 +273,7 @@ bot.command('mypending', async (ctx) => {
       keyboard: [
         [{
           text: "Open Web App",
-          web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+          web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
         }],
       ],
       resize_keyboard: true,
@@ -228,7 +286,29 @@ bot.command('myselected', async (ctx) => {
   const query = { status: "selected", chatId: ctx.message.chat.id };
   await listSwaps(ctx, query, "Here are your selected swaps:");
 });
-
+bot.command('locked', async (ctx) => {
+  const query = { status: "locked", chatId: ctx.message.chat.id };
+  let docs = await listSwaps(ctx, query, "Here are your locked swaps:");
+  if(!docs) return;
+  docs = docs.map(doc => {
+    return({
+      ...doc,
+      isOwner: ctx.message.chat.id === doc.chatId 
+    });
+  })
+  ctx.reply(`Open miniapp to view the list.`, {
+    reply_markup: {
+      keyboard: [
+        [{
+          text: "Open Web App",
+          web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+        }],
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true
+    }
+  });
+});
 // Command to create a swap
 bot.command('create', async (ctx) => {
   const params = ctx.message.text.split(' ').slice(1).join(' '); // Get parameters after command
@@ -261,7 +341,7 @@ bot.command('create', async (ctx) => {
         keyboard: [
           [{
           text: "Open Web App",
-          web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+          web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
           }],
         ],
         resize_keyboard: true,
@@ -313,7 +393,7 @@ bot.command('select', async (ctx) => {
 
 bot.command('finish', async (ctx) => {
   const swapId = ctx.message.text.split(' ')[1]; // Extract swapId from command
-  await startSwap(ctx,swapId)
+  await finishSelectedSwap(ctx,swapId)
 });
 
 bot.action(/confirm_swap_(.+)/, async (ctx) => {
@@ -372,13 +452,13 @@ bot.on('message', async (ctx) => {
           isOwner: ctx.message.chat.id === doc.chatId 
         });
       });
-      console.log(`${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}`)
+      console.log(`${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}`)
       ctx.reply("Action performed, connect app to see your pending swaps", {
         reply_markup: {
           keyboard: [
             [{
             text: "Open Web App",
-            web_app: { url: `${MINIAPP_URL}/myPendingSwaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+            web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
             }],
           ],
           resize_keyboard: true,
@@ -465,6 +545,7 @@ bot.telegram.setMyCommands([
   { command: 'list', description: 'List all swaps' },
   { command: 'mypending', description: 'List your pending swaps' },
   { command: 'myselected', description: 'List your selected swaps' },
+  { command: 'locked', description: 'List locked swaps' },
   { command: 'create', description: 'Create a new swap (e.g., /create Lightning 10)' },
   { command: 'select', description: 'Select a specific swap (e.g., /select 12345)' },
   { command: 'finish', description: 'Finalize a specific swap (e.g., /finish 12345)' },
