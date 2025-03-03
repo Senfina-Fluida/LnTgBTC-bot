@@ -193,7 +193,38 @@ async function finishSelectedSwap(ctx,swapId){
     return ctx.reply("An error occurred during update.");
   }
 };
+async function refundSelectedSwap(ctx,swapId){
+  try {
+      let query = {
+        _id: swapId,
+        // status: "locked"
+      };
+      let docs = await queryDocuments(query);
+      if(docs.length === 0){
+        return ctx.reply("No swap with that id");
+      }
+      let swap = docs[0];
+      if(!swap) return;
+      ctx.reply(
+        `Continue in the MiniApp to proceed with refund`,{
+          reply_markup: {
+            keyboard: [
+              [{
+                text: "Refund Swap",
+                web_app: { url: `${MINIAPP_URL}/refundSwap?params=${encodeURIComponent(JSON.stringify({swap}))}` }
+              }]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          }
+        }
+      );
 
+  } catch (error) {
+    console.error("Error updating swap:", error);
+    return ctx.reply("An error occurred during update.");
+  }
+};
 bot.use((ctx, next) => {
   console.log('Received update:', ctx.update);
   return next();
@@ -284,7 +315,27 @@ bot.command('mypending', async (ctx) => {
 
 bot.command('myselected', async (ctx) => {
   const query = { status: "selected", chatId: ctx.message.chat.id };
-  await listSwaps(ctx, query, "Here are your selected swaps:");
+  let docs = await listSwaps(ctx, query, "Here are your selected swaps:");
+  if(!docs) return;
+  docs = docs.map(doc => {
+    return({
+      ...doc,
+      isOwner: ctx.message.chat.id === doc.chatId 
+    });
+  })
+  console.log(`${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}`)
+  ctx.reply(`Open miniapp to view the list.`, {
+    reply_markup: {
+      keyboard: [
+        [{
+          text: "Open Web App",
+          web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
+        }],
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true
+    }
+  });
 });
 bot.command('locked', async (ctx) => {
   const query = { status: "locked", chatId: ctx.message.chat.id };
@@ -395,7 +446,10 @@ bot.command('finish', async (ctx) => {
   const swapId = ctx.message.text.split(' ')[1]; // Extract swapId from command
   await finishSelectedSwap(ctx,swapId)
 });
-
+bot.command('refund', async (ctx) => {
+  const swapId = ctx.message.text.split(' ')[1]; // Extract swapId from command
+  await refundSelectedSwap(ctx,swapId)
+});
 bot.action(/confirm_swap_(.+)/, async (ctx) => {
   const swapId = ctx.match[1];
   await startSwap(ctx,swapId);
@@ -413,6 +467,8 @@ bot.command('help', (ctx) => {
     `- /myselected: List your selected swaps.\n` +
     `- /create [destination] [amount]: Create a new swap.\n` +
     `- /select [swapId]: Select a specific swap. \n`,
+    `- /finish [swapId]: Finish a specific swap. \n`,
+    `- /refund [swapId]: Refund a specific swap. \n`,
     `- /finish [swapId]: Finalize a specific swap.\n`,
     { parse_mode: 'Markdown' } // Use Markdown for formatting
   );
@@ -470,7 +526,8 @@ bot.on('message', async (ctx) => {
     else if (data.action === 'delete_pending_swap') {
       const query = {
         _id: data.swapId,
-        status: "pending"
+        status: "pending",
+        chatId: ctx.message.chat.id
       }
       const docs = await queryDocuments(query);
       const swap = docs[0];
@@ -488,12 +545,24 @@ bot.on('message', async (ctx) => {
     } 
     else if (data.action === 'swap_locked') {
 
-      const query = {
-        _id: data.swapId,
+      let query = {
+        _id: data.swapId
       }
-      const docs = await queryDocuments(query);
-      const swap = docs[0];
-      console.log(swap)
+      let docs = await queryDocuments(query);
+      let swap = docs[0];
+      if(!swap) return;
+      await updateDocument(
+        { _id: data.swapId},
+        {
+          $set : {
+            status: "locked",
+            invoice: data.invoice
+          }
+        } 
+      );
+      docs = await queryDocuments(query);
+      swap = docs[0];
+      if(!swap) return;
       await bot.telegram.sendMessage(
         swap.selectorChatId,
         `Swap ${swap.swapId} is ready to be finished, start process in the miniapp to pay invoice and claim tgBTC `,
@@ -514,6 +583,27 @@ bot.on('message', async (ctx) => {
       );
       ctx.reply("Your swap should be finished soon");
     } 
+    else if (data.action === 'refund_swap') {
+      const query = {
+        _id: data.swapId,
+        // status: "locked"
+      }
+      const docs = await queryDocuments(query);
+      const swap = docs[0];
+      if(!swap) return;
+      ctx.reply("Swap selected for refund, continue in the MiniApp", {
+        reply_markup: {
+          keyboard: [
+            [{
+            text: "Open Web App",
+            web_app: { url: `${MINIAPP_URL}/refundSwap?params=${encodeURIComponent(JSON.stringify(swap))}` }
+            }],
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: true
+        }
+      });
+    } 
     else if (data.action === 'swap_finished') {
 
       const query = {
@@ -521,15 +611,17 @@ bot.on('message', async (ctx) => {
       }
       const docs = await queryDocuments(query);
       const swap = docs[0];
-      const doc = {
-        _id: swap._id,
-        status: "finished",
-      }
-      console.log(ctx.message.chat)
-      const docId = await insertDocument(doc);
+      await updateDocument(
+        { _id: swap._id},
+        {
+          $set : {
+            status: "finished"
+          }
+        } 
+      );
       await bot.telegram.sendMessage(
         swap.chatId,
-        `Your swap ${swapId}, has been completed`
+        `Your swap ${swap._id}, has been completed`
       );
       ctx.reply("Your swap has been completed");
     } 
@@ -549,6 +641,7 @@ bot.telegram.setMyCommands([
   { command: 'create', description: 'Create a new swap (e.g., /create Lightning 10)' },
   { command: 'select', description: 'Select a specific swap (e.g., /select 12345)' },
   { command: 'finish', description: 'Finalize a specific swap (e.g., /finish 12345)' },
+  { command: 'refund', description: 'Refund a specific swap (e.g., /refund 12345)' },
   { command: 'help', description: 'Show available commands' },
 ])
   .then(() => {
