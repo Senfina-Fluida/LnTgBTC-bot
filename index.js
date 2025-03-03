@@ -197,7 +197,7 @@ async function refundSelectedSwap(ctx,swapId){
   try {
       let query = {
         _id: swapId,
-        // status: "locked"
+        status: "locked"
       };
       let docs = await queryDocuments(query);
       if(docs.length === 0){
@@ -211,7 +211,7 @@ async function refundSelectedSwap(ctx,swapId){
             keyboard: [
               [{
                 text: "Refund Swap",
-                web_app: { url: `${MINIAPP_URL}/refundSwap?params=${encodeURIComponent(JSON.stringify({swap}))}` }
+                web_app: { url: `${MINIAPP_URL}/refundSwap?params=${encodeURIComponent(JSON.stringify(swap))}` }
               }]
             ],
             resize_keyboard: true,
@@ -565,14 +565,14 @@ bot.on('message', async (ctx) => {
       if(!swap) return;
       await bot.telegram.sendMessage(
         swap.selectorChatId,
-        `Swap ${swap.swapId} is ready to be finished, start process in the miniapp to pay invoice and claim tgBTC `,
+        `Swap ${swap._id} is ready to be finished, start process in the miniapp to pay invoice and claim tgBTC `,
         {
           reply_markup: {
             keyboard: [
               [
                 {
                   text: "Open Web App",
-                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({fromTON: false, invoice: swap.invoice}))}` }
+                  web_app: { url: `${MINIAPP_URL}/startSwap?params=${encodeURIComponent(JSON.stringify({fromTON: false, invoice: swap.invoice, _id: swap._id}))}` }
                 }
               ]
             ],
@@ -607,7 +607,7 @@ bot.on('message', async (ctx) => {
     else if (data.action === 'swap_finished') {
 
       const query = {
-        _id: data.id,
+        _id: data.swapId,
       }
       const docs = await queryDocuments(query);
       const swap = docs[0];
