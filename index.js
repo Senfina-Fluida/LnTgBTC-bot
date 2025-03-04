@@ -1,18 +1,19 @@
 import 'dotenv/config'; // Load environment variables using import
 
 import { Telegraf } from 'telegraf';
+import { decode } from 'light-bolt11-decoder';
+
 import { queryDocuments, insertDocument, updateDocument,deleteDocument } from './db.js';
 
 
 console.log('Environment variables loaded.');
 
 const MINIAPP_URL = process.env.MINIAPP_URL;
+
 if(!MINIAPP_URL){
   console.error('Error: MINIAPP_URL is not defined in the .env file');
   process.exit(1); // Terminate process if MINIAPP_URL is not defined
-
 }
-
 
 if (!process.env.BOT_TOKEN) {
   console.error('Error: BOT_TOKEN is not defined in the .env file');
@@ -23,12 +24,12 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 console.log('Telegraf instance created.');
 
 // Helper function to format swap data
-function formatSwap(swap, index) {
+const formatSwap = (swap, index) => {
   return `${index + 1}. Source: ${swap.source}, Destination: ${swap.destination}, Amount: ${swap.amount}, SwapID: ${swap._id}\n`;
 }
 
 // Helper function to send messages in chunks
-async function sendChunkedMessage(ctx, message) {
+const sendChunkedMessage= async (ctx, message) => {
   const chunkSize = 4096;
   for (let i = 0; i < message.length; i += chunkSize) {
     const chunk = message.substring(i, i + chunkSize);
@@ -37,7 +38,7 @@ async function sendChunkedMessage(ctx, message) {
 }
 
 // Generic swap listing function (reusable)
-async function listSwaps(ctx, query, title) {
+const listSwaps = async (ctx, query, title) => {
   try {
     const docs = await queryDocuments(query);
     if (docs.length === 0) {
@@ -57,7 +58,7 @@ async function listSwaps(ctx, query, title) {
   }
 }
 
-async function startSwap(ctx,swapId){
+const startSwap = async (ctx,swapId) => {
   try {
       let query = {
         _id: swapId,
@@ -134,7 +135,7 @@ async function startSwap(ctx,swapId){
     return ctx.reply("An error occurred during update.");
   }
 };
-async function finishSelectedSwap(ctx,swapId){
+const finishSelectedSwap = async (ctx,swapId) => {
   try {
       let query = {
         _id: swapId,
@@ -193,7 +194,7 @@ async function finishSelectedSwap(ctx,swapId){
     return ctx.reply("An error occurred during update.");
   }
 };
-async function refundSelectedSwap(ctx,swapId){
+const refundSelectedSwap = async (ctx,swapId) => {
   try {
       let query = {
         _id: swapId,
@@ -225,6 +226,56 @@ async function refundSelectedSwap(ctx,swapId){
     return ctx.reply("An error occurred during update.");
   }
 };
+const isInvoiceAmountValid = async (invoice,amt) => {
+  try{
+    const decoded = decode(invoice);
+    const amount = Number(decoded.sections[2].value)/1000;
+    if(amount === Number(amt)) return(true);
+  } catch(err){
+    console.error(err);
+  }
+  return(false);
+};
+const isInvoiceHashLockValid = async (invoice,contractHashLock) => {
+  try{
+    const decoded = decode(invoice);
+    const hashLock = "0x" + lnToTgDecodedInvoice.payment_hash
+    if(hashLock === contractHashLock) return(true);
+  } catch(err){
+    console.error(err);
+  }
+  return(false);
+};
+/*
+const getContractSwap = (invoice) => {
+  return(
+    new Promise((resolve, reject) => {
+      try{
+        const decoded = decode(invoice);
+        const hashLockBigInt = BigInt('0x'+decoded.payment_hash);
+        client.runGetMethod({
+          address: CONTRACT_ADDRESS,
+          method: 'get_swap_by_hashlock',
+          stack: [{ type: "num", value: hashLockBigInt.toString() }]
+        }).then(result => {
+          const contractSwap = {
+            swapId: result.stack[0][1],
+            amount: result.stack[3][1],
+            hashLock: result.stack[4][1],
+            timeLock: result.stack[5][1],
+            isCompleted: result.stack[6][1]
+          };
+          console.log(contractSwap)
+          resolve(contractSwap);
+        });
+      } catch(err){
+        console.error(err);
+        reject(null);
+      }
+    })
+  )
+}
+*/
 bot.use((ctx, next) => {
   console.log('Received update:', ctx.update);
   return next();
@@ -546,11 +597,17 @@ bot.on('message', async (ctx) => {
     else if (data.action === 'swap_locked') {
 
       let query = {
-        _id: data.swapId
+        _id: data.swapId,
       }
       let docs = await queryDocuments(query);
       let swap = docs[0];
-      if(!swap) return;
+      if(!swap) return ctx.reply("No swap found");
+      //const contractSwap = await getContractSwap(data.invoice);
+      //if(!contractSwap) return ctx.reply("Swap has not been inserted in contract");
+      const isAmountValid = isInvoiceAmountValid(data.invoice,swap.amount);
+      //const isHashLockValid = isInvoiceHashLockValid(data.invoice,contractSwap.hashLock);
+      if(!isAmountValid) return ctx.reply("Wrong amount in the invoice");
+
       await updateDocument(
         { _id: data.swapId},
         {
@@ -611,6 +668,7 @@ bot.on('message', async (ctx) => {
       }
       const docs = await queryDocuments(query);
       const swap = docs[0];
+      if(!swap) return;
       await updateDocument(
         { _id: swap._id},
         {
@@ -623,7 +681,11 @@ bot.on('message', async (ctx) => {
         swap.chatId,
         `Your swap ${swap._id}, has been completed`
       );
-      ctx.reply("Your swap has been completed");
+      await bot.telegram.sendMessage(
+        swap.selectorChatId,
+        `Your selected swap ${swap._id}, has been completed`
+      );
+      return
     } 
   } else {
     ctx.reply('Hello, you can type /start to see the WebApp button or /help to see all commands.');

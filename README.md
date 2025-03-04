@@ -140,7 +140,7 @@ BOT_TOKEN=BOT_TOKEN_CREATED_WITH_BOT_FATHER
 MINIAPP_URL=URL_OF_THE_MINIAPP
 ```
 
-Install packages with ```npm install``` and then run ```index.js``` with ```node index.js```
+Install packages with ```npm install``` and then run with ```npm start```
 
 ---
 
