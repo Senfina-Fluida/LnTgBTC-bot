@@ -62,7 +62,7 @@ const startSwap = async (ctx,swapId) => {
   try {
       let query = {
         _id: swapId,
-        status: "pending"
+        //status: "pending"
       };
       let docs = await queryDocuments(query);
       if(docs.length === 0){
@@ -621,7 +621,7 @@ bot.on('message', async (ctx) => {
       swap = docs[0];
       if(!swap) return;
       await bot.telegram.sendMessage(
-        swap.selectorChatId,
+        swap.destination === "TON" ? swap.chatId : swap.selectorChatId,
         `Swap ${swap._id} is ready to be finished, start process in the miniapp to pay invoice and claim tgBTC `,
         {
           reply_markup: {
