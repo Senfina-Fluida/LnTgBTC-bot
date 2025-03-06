@@ -2,6 +2,7 @@ import 'dotenv/config'; // Load environment variables using import
 
 import { Telegraf } from 'telegraf';
 import { decode } from 'light-bolt11-decoder';
+import { TONXJsonRpcProvider } from "@tonx/core";
 
 import { queryDocuments, insertDocument, updateDocument,deleteDocument } from './db.js';
 
@@ -9,7 +10,7 @@ import { queryDocuments, insertDocument, updateDocument,deleteDocument } from '.
 console.log('Environment variables loaded.');
 
 const MINIAPP_URL = process.env.MINIAPP_URL;
-
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 if(!MINIAPP_URL){
   console.error('Error: MINIAPP_URL is not defined in the .env file');
   process.exit(1); // Terminate process if MINIAPP_URL is not defined
@@ -19,17 +20,27 @@ if (!process.env.BOT_TOKEN) {
   console.error('Error: BOT_TOKEN is not defined in the .env file');
   process.exit(1); // Terminate process if BOT_TOKEN is not defined
 }
-
+if (!process.env.CONTRACT_ADDRESS) {
+  console.error('Error: CONTRACT_ADDRESS is not defined in the .env file');
+  process.exit(1); // Terminate process if BOT_TOKEN is not defined
+}
+if (!process.env.TONXAPI_KEY) {
+  console.error('Error: TONXAPI_KEY is not defined in the .env file');
+  process.exit(1); // Terminate process if BOT_TOKEN is not defined
+}
 const bot = new Telegraf(process.env.BOT_TOKEN);
 console.log('Telegraf instance created.');
-
+const client = new TONXJsonRpcProvider({
+  network: "testnet",
+  apiKey: process.env.TONXAPI_KEY,
+});
 // Helper function to format swap data
 const formatSwap = (swap, index) => {
   return `${index + 1}. Source: ${swap.source}, Destination: ${swap.destination}, Amount: ${swap.amount}, SwapID: ${swap._id}\n`;
 }
 
 // Helper function to send messages in chunks
-const sendChunkedMessage= async (ctx, message) => {
+const sendChunkedMessage = async (ctx, message) => {
   const chunkSize = 4096;
   for (let i = 0; i < message.length; i += chunkSize) {
     const chunk = message.substring(i, i + chunkSize);
@@ -239,18 +250,20 @@ const isInvoiceAmountValid = async (invoice,amt) => {
 const isInvoiceHashLockValid = async (invoice,contractHashLock) => {
   try{
     const decoded = decode(invoice);
-    const hashLock = "0x" + lnToTgDecodedInvoice.payment_hash
+    const hashLock = "0x" + decoded.payment_hash
     if(hashLock === contractHashLock) return(true);
   } catch(err){
     console.error(err);
   }
   return(false);
 };
-/*
+
 const getContractSwap = (invoice) => {
-  return(
-    new Promise((resolve, reject) => {
-      try{
+  let i = 0;
+  return new Promise((resolve) => {
+    // Set up the interval
+    const interval = setInterval(async () => {
+      try {
         const decoded = decode(invoice);
         const hashLockBigInt = BigInt('0x'+decoded.payment_hash);
         client.runGetMethod({
@@ -258,6 +271,10 @@ const getContractSwap = (invoice) => {
           method: 'get_swap_by_hashlock',
           stack: [{ type: "num", value: hashLockBigInt.toString() }]
         }).then(result => {
+          if(result.stack.length <= 1){
+            i++
+            return;
+          }
           const contractSwap = {
             swapId: result.stack[0][1],
             amount: result.stack[3][1],
@@ -268,14 +285,103 @@ const getContractSwap = (invoice) => {
           console.log(contractSwap)
           resolve(contractSwap);
         });
-      } catch(err){
-        console.error(err);
-        reject(null);
+      } catch (error) {
+        console.error(`Error fetching transactions, tries: ${i}`);
       }
-    })
-  )
-}
+      // If the maximum number of attempts is reached, resolve with `false` and clear the interval
+      if (i >= 5) {
+        clearInterval(interval); // Stop the interval
+        resolve(null);
+        return; // Exit the function early
+      }
+      i++; // Increment the attempt counter
+    }, 10000); // Check every 10 seconds
+  });
+};
+/*
+const isTransactionConfirmed = (transactionHash) => {
+  let i = 0;
+  return new Promise((resolve) => {
+    // Set up the interval
+    const interval = setInterval(async () => {
+      try {
+        console.log(client)
+        const txResponse = await client.getTransactions({
+          hash: transactionHash,
+        });
+        console.log(txResponse);
+
+        // If the transaction is found, resolve with `true` and clear the interval
+        if (txResponse?.length > 0) {
+          clearInterval(interval); // Stop the interval
+          resolve(true);
+          return; // Exit the function early
+        }
+
+      } catch (error) {
+        console.error(`Error fetching transactions, tries: ${i}`);
+      }
+      // If the maximum number of attempts is reached, resolve with `false` and clear the interval
+      if (i >= 5) {
+        clearInterval(interval); // Stop the interval
+        resolve(false);
+        return; // Exit the function early
+      }
+      i++; // Increment the attempt counter
+    }, 10000); // Check every 10 seconds
+  });
+};
 */
+const isTransactionValid = (transactionHash) => {
+  let i = 0;
+  const baseUrl = 'https://testnet.toncenter.com/api/v2/getTransactions';
+
+  // Build query parameters exactly as in the curl example.
+  const params = new URLSearchParams({
+    address: CONTRACT_ADDRESS,
+    limit: '1',
+    hash: transactionHash,
+    to_lt: '0',
+    archival: 'false'
+  });
+  const url = `${baseUrl}?${params.toString()}`;
+
+  return new Promise((resolve) => {
+    // Set up the interval
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'accept': 'application/json'
+          }
+        });
+    
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("Error from API:", errorText);
+          return;
+        }
+        const result = await response.json();
+        console.log("Received transaction data:",JSON.stringify(result, null, 2));
+        clearInterval(interval); // Stop the interval
+        resolve(true);
+        return; // Exit the function early
+
+      } catch (error) {
+        console.error(`Error fetching transactions, tries: ${i}`);
+      }
+      // If the maximum number of attempts is reached, resolve with `false` and clear the interval
+      if (i >= 5) {
+        clearInterval(interval); // Stop the interval
+        resolve(false);
+        return; // Exit the function early
+      }
+      i++; // Increment the attempt counter
+    }, 10000); // Check every 10 seconds
+  });
+};
+isTransactionValid("ba25e32eee5a799b74518626e50010f20d3af539842377710550578988cd1207")
 bot.use((ctx, next) => {
   console.log('Received update:', ctx.update);
   return next();
@@ -602,12 +708,26 @@ bot.on('message', async (ctx) => {
       let docs = await queryDocuments(query);
       let swap = docs[0];
       if(!swap) return ctx.reply("No swap found");
-      //const contractSwap = await getContractSwap(data.invoice);
-      //if(!contractSwap) return ctx.reply("Swap has not been inserted in contract");
+      await bot.telegram.sendMessage(
+        swap.chatId,
+        `Swap ${swap._id} is being verified if transaction ${data.transaction} is valid.`
+      );
+      const isTxValid = await isTransactionValid(data.transaction);
+      if(!isTxValid) return ctx.reply("Transaction not valid");
+      await bot.telegram.sendMessage(
+        swap.chatId,
+        `Transaction ${data.transaction} is valid. Checking if parameters in contract are correct. It may take some minutes ...`
+      );
+      const contractSwap = await getContractSwap(data.invoice);
+      if(!contractSwap) return ctx.reply("Swap has not been inserted in contract");
       const isAmountValid = isInvoiceAmountValid(data.invoice,swap.amount);
-      //const isHashLockValid = isInvoiceHashLockValid(data.invoice,contractSwap.hashLock);
+      const isHashLockValid = isInvoiceHashLockValid(data.invoice,contractSwap.hashLock);
       if(!isAmountValid) return ctx.reply("Wrong amount in the invoice");
-
+      if(!isHashLockValid) return ctx.reply("Invalid Invoice");
+      await bot.telegram.sendMessage(
+        swap.chatId,
+        `Parameters in contract are correct.`
+      );
       await updateDocument(
         { _id: data.swapId},
         {
