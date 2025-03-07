@@ -783,6 +783,24 @@ bot.on('message', async (ctx) => {
         }
       });
     } 
+    else if (data.action === 'refund_initiated') {
+      const query = {
+        _id: data.swapId,
+        status: "locked"
+      }
+      const docs = await queryDocuments(query);
+      const swap = docs[0];
+      if(!swap) return;
+      await updateDocument(
+        { _id: swap._id},
+        {
+          $set : {
+            status: "refunded"
+          }
+        } 
+      );
+      ctx.reply("Refund done");
+    } 
     else if (data.action === 'swap_finished') {
 
       const query = {
