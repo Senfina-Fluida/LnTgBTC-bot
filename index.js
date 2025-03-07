@@ -217,6 +217,7 @@ const refundSelectedSwap = async (ctx,swapId) => {
       }
       let swap = docs[0];
       if(!swap) return;
+      console.log(`${MINIAPP_URL}/refundSwap?params=${encodeURIComponent(JSON.stringify(swap))}`)
       ctx.reply(
         `Continue in the MiniApp to proceed with refund`,{
           reply_markup: {
@@ -271,6 +272,7 @@ const getContractSwap = (invoice) => {
           method: 'get_swap_by_hashlock',
           stack: [{ type: "num", value: hashLockBigInt.toString() }]
         }).then(result => {
+          console.log(result)
           if(result.stack.length <= 1){
             i++
             return;
@@ -381,7 +383,7 @@ const isTransactionValid = (transactionHash) => {
     }, 10000); // Check every 10 seconds
   });
 };
-isTransactionValid("ba25e32eee5a799b74518626e50010f20d3af539842377710550578988cd1207")
+
 bot.use((ctx, next) => {
   console.log('Received update:', ctx.update);
   return next();
@@ -434,7 +436,7 @@ bot.command('list', async (ctx) => {
       keyboard: [
         [
           {
-            text: "Open Web App",
+            text: "Pending Swaps List",
             web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
           }
         ]
@@ -460,7 +462,7 @@ bot.command('mypending', async (ctx) => {
     reply_markup: {
       keyboard: [
         [{
-          text: "Open Web App",
+          text: "Your Pending Swaps",
           web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
         }],
       ],
@@ -485,7 +487,7 @@ bot.command('myselected', async (ctx) => {
     reply_markup: {
       keyboard: [
         [{
-          text: "Open Web App",
+          text: "Selected Swaps",
           web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
         }],
       ],
@@ -508,7 +510,7 @@ bot.command('locked', async (ctx) => {
     reply_markup: {
       keyboard: [
         [{
-          text: "Open Web App",
+          text: "Locked Swaps",
           web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
         }],
       ],
@@ -548,7 +550,7 @@ bot.command('create', async (ctx) => {
       reply_markup: {
         keyboard: [
           [{
-          text: "Open Web App",
+          text: "Pending Swaps",
           web_app: { url: `${MINIAPP_URL}/swaps?params=${encodeURIComponent(JSON.stringify(docs))}` }
           }],
         ],
